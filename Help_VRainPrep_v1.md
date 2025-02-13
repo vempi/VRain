@@ -36,10 +36,10 @@ serta melakukan agregasi data berdasarkan periode waktu tertentu.
 ---
 
 **Pesan Kesalahan yang Mungkin Muncul:**
-- "Please select data source type correctly!" → Pastikan memilih sumber data yang benar.
-- "No CSV files found in the selected directory." → Folder tidak mengandung file CSV.
-- "Error in reading CSV files or missing folders!" → Kesalahan saat membaca file, periksa format dan lokasi file.
-- "File can not be saved! Please close the file." → File output sedang dibuka di program lain, tutup sebelum menjalankan ulang.
+- "Please select data source type correctly!" → Pastikan memilih sumber data yang benar. Pastikan misal data yang anda download adalah GPM, pilih sumber data GPM.
+- "No CSV files found in the selected directory." → Folder tidak mengandung file CSV. Folder dan atau subfolder harus berisi file-file CSV.
+- "Error in reading CSV files or missing folders!" → Kesalahan saat membaca file, periksa format dan pastikan lokasi file benar.
+- "File can not be saved! Please close the file." → File output sedang dibuka di program lain, tutup Excel sebelum menjalankan ulang.
 
 ---
 
