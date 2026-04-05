@@ -1,0 +1,10 @@
+# VRain lite requirements (for EXE build)
+pandas>=1.5
+numpy>=1.23
+matplotlib>=3.6
+scipy>=1.9
+lmoments3
+shapely>=2.0
+pyshp>=2.3
+pyproj>=3.4
+pyinstaller>=5.0

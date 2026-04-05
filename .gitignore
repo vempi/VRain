@@ -1,0 +1,31 @@
+# Build artifacts
+dist/
+build/__pycache__/
+*.pkg
+*.pyz
+
+# PyInstaller work dirs (only build/VRain* folders, not the build/ folder itself)
+build/VRainPrep/
+build/VRainStorm/
+build/VRainThiessen/
+build/VRainFreq/
+
+# Virtual environment
+venv_build/
+venv/
+.venv/
+
+# Temp files
+tmp/
+dist_nuitka/
+*.log
+__pycache__/
+*.pyc
+*.pyo
+
+# UPX binary (large, user downloads separately)
+upx.exe
+
+# IDE
+.vscode/
+.idea/
