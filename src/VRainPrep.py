@@ -5,6 +5,8 @@ import os
 import sys
 import numpy as np
 import webbrowser
+import threading
+import queue
 
 def _base_path():
     """Return base directory — handles both normal run and PyInstaller frozen exe."""
@@ -53,7 +55,20 @@ def detect_col(df, keywords, fallback_idx=0):
 
 def gather_data(loc='', dirout='', source='UGM-Hidro',
                 period='None', calc='Sum',
-                progress_callback=None, root_update=None):
+                progress_callback=None, root_update=None,
+                on_error=None, on_success=None):
+
+    def _err(title, msg):
+        if on_error:
+            on_error(title, msg)
+        else:
+            messagebox.showerror(title, msg)
+
+    def _info(title, msg):
+        if on_success:
+            on_success(title, msg)
+        else:
+            messagebox.showinfo(title, msg)
 
     if not dirout.endswith("/"):
         dirout += '/'
@@ -87,10 +102,20 @@ def gather_data(loc='', dirout='', source='UGM-Hidro',
         return res
 
     def proPERSIANN(file):
-        df = smart_read(file).iloc[:, 0:2]
+        # PERSIANN raw CSV has a metadata header row then 2-column data rows.
+        # e.g.: "Time, Rain(mm), Latitude, -7.792, ..."  (7 cols)
+        #        "PERSIANN_1h2010010100, 0.000"           (2 cols)
+        # Read with header=None + skiprows=1 + usecols=[0,1] to avoid mismatch.
+        try:
+            df = pd.read_csv(file, header=None, skiprows=1, usecols=[0, 1],
+                             names=['Time', 'Rain'], skipinitialspace=True)
+        except Exception:
+            df = pd.read_csv(file, sep=';', header=None, skiprows=1, usecols=[0, 1],
+                             names=['Time', 'Rain'], skipinitialspace=True)
+        df['Rain'] = pd.to_numeric(df['Rain'], errors='coerce')
         df.replace(-99, np.nan, inplace=True)
         pat = r'PERSIANN_1h(\d{4})(\d{2})(\d{2})(\d{2})'
-        extracted = df['Time'].astype(str).str.extract(pat)
+        extracted = df['Time'].astype(str).str.strip().str.extract(pat)
         if extracted.isnull().values.any():
             print("Skipping file due to format issues:", file)
             return None
@@ -145,13 +170,13 @@ def gather_data(loc='', dirout='', source='UGM-Hidro',
             if progress_callback:
                 progress_callback(100)
         except Exception:
-            messagebox.showerror("Error", "Please select data source type correctly!")
+            _err("Error", "Please select data source type correctly!")
             return
     else:
         try:
             lsts = list_all_items(loc, patterns)
             if not lsts:
-                messagebox.showerror("Error", "No CSV/XLSX files found in the selected directory.")
+                _err("Error", "No CSV/XLSX files found in the selected directory.")
                 return
             total_files = len(lsts)
             dfs = pd.DataFrame()
@@ -163,12 +188,10 @@ def gather_data(loc='', dirout='', source='UGM-Hidro',
                     dfs = pd.concat([dfs, df], ignore_index=True)
                     if progress_callback:
                         progress_callback(int((i + 1) / total_files * 100))
-                    if root_update:
-                        root_update()
                 except Exception:
-                    messagebox.showerror("Iteration Error", f"Error reading: {file}")
+                    _err("Iteration Error", f"Error reading: {file}")
         except Exception:
-            messagebox.showerror("Error", "Error reading files or missing folders!")
+            _err("Error", "Error reading files or missing folders!")
             return
 
     dfs = dfs.sort_values(by='Time').reset_index(drop=True)
@@ -183,10 +206,10 @@ def gather_data(loc='', dirout='', source='UGM-Hidro',
         dirout, f'VRain-prep_{source}_{start}-{end}_{period}-{calc}.csv')
     try:
         out.to_csv(output_file, index=False)
-        messagebox.showinfo("Success", f"Processed data saved to:\n{output_file}")
+        _info("Success", f"Processed data saved to:\n{output_file}")
     except Exception:
-        messagebox.showerror("Error",
-            "File cannot be saved! Make sure the output file is not open in another program.")
+        _err("Error",
+             "File cannot be saved! Make sure the output file is not open in another program.")
 
 
 # ─────────────────────────────── GUI Application ─────────────────────────────
@@ -413,17 +436,43 @@ class VRainPrepApp:
 
         self.status_var.set("Processing…")
         self.progress_var.set(0)
+        self.process_button.config(state="disabled")
         self.root.update_idletasks()
 
-        gather_data(
-            loc=input_dir, dirout=output_dir,
-            source=self.data_source_var.get(),
-            period=self.time_var.get(),
-            calc=self.stat_var.get(),
-            progress_callback=lambda v: (self.progress_var.set(v), self.root.update_idletasks()),
-            root_update=self.root.update_idletasks
-        )
-        self.status_var.set("Done.")
+        msg_q = queue.Queue()
+
+        def run():
+            gather_data(
+                loc=input_dir, dirout=output_dir,
+                source=self.data_source_var.get(),
+                period=self.time_var.get(),
+                calc=self.stat_var.get(),
+                progress_callback=lambda v: msg_q.put(('progress', v)),
+                on_error=lambda t, m: msg_q.put(('error', (t, m))),
+                on_success=lambda t, m: msg_q.put(('info', (t, m))),
+            )
+            msg_q.put(('done', None))
+
+        threading.Thread(target=run, daemon=True).start()
+        self._poll_queue(msg_q)
+
+    def _poll_queue(self, msg_q):
+        try:
+            while True:
+                kind, payload = msg_q.get_nowait()
+                if kind == 'progress':
+                    self.progress_var.set(payload)
+                elif kind == 'error':
+                    messagebox.showerror(*payload)
+                elif kind == 'info':
+                    messagebox.showinfo(*payload)
+                elif kind == 'done':
+                    self.status_var.set("Done.")
+                    self.process_button.config(state="normal")
+                    return
+        except queue.Empty:
+            pass
+        self.root.after(50, self._poll_queue, msg_q)
 
     # ── About ─────────────────────────────────────────────────────────────────
 

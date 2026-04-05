@@ -84,8 +84,7 @@ def preOlah(dfin):
     df.columns = ['Rain']
 
     # Clean Rain values
-    df['Rain'] = pd.to_numeric(df['Rain'], errors="coerce").fillna(0)
-    df['Rain'] = df['Rain'].apply(lambda x: max(x, 0))
+    df['Rain'] = pd.to_numeric(df['Rain'], errors="coerce").fillna(0).clip(lower=0)
 
     return df
 
@@ -194,7 +193,7 @@ def getpivot(pivoted, dat='',sta='', dirout='', saveas=True):
 
         plt.tight_layout()
         plt.savefig(dirout + 'VRain_' + dat + '-' + sta + '-duration.png', dpi=300)
-        plt.show()
+        plt.close()
     return dur
 
 
@@ -207,7 +206,7 @@ def getperiod(dur, dat='',sta='', dirout='', saveas=True):
         plt.ylabel('Number of events')
         plt.title(sta)
         plt.savefig(dirout+'VRain_'+dat+'-'+sta+'_histogram-duration_'+str(nper)+'-hour.png',dpi=300)
-        plt.show()
+        plt.close()
 
     return nper
 
@@ -289,15 +288,14 @@ def plot_gethuff(f, threshold, norain,dat='',sta='', dirout='', dur_mode=''):
                 ax.set_xlabel(xlabel)
                 ax.set_ylabel('Rainfall fraction (0-1)')
                 ax.grid(True)
-    plt.tight_layout(rect=[0, 0, 1, 0.96])        
-    plt.show()
+    plt.tight_layout(rect=[0, 0, 1, 0.96])
 
-    popup1 = tk.Toplevel(root)  # Create a new top-level window
+    popup1 = tk.Toplevel(root)
     popup1.title("Plot Huff Rainfall Distribution")
-            
     canvas1 = FigureCanvasTkAgg(fig, master=popup1)
     canvas1.draw()
     canvas1.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+    plt.close(fig)
 
 
 def getcum_huff(pivoted, nper,dat='',sta='', dirout=''):
@@ -346,9 +344,9 @@ def getcum_huff(pivoted, nper,dat='',sta='', dirout=''):
                 ax.set_xlabel(xlabel)
                 ax.set_ylabel('Rainfall fraction (0-1)')
                 ax.grid(True)
-    plt.tight_layout(rect=[0, 0, 1, 0.96])        
-    plt.show()
-        
+    plt.tight_layout(rect=[0, 0, 1, 0.96])
+    plt.close()
+
     # Create Cumulative plot
     fig, axes = plt.subplots(2, 2, figsize=(12, 8))  # 2x2 grid
     fig.suptitle(sta+"\nHuff method (all durations)", fontsize=14)
@@ -374,8 +372,8 @@ def getcum_huff(pivoted, nper,dat='',sta='', dirout=''):
     
     # Adjust layout
     plt.tight_layout(rect=[0, 0, 1, 0.96])  # Prevent title overlap
-    plt.show()
-    
+    plt.close()
+
     # plot whole
     perc = cums*100
     if nper==100: perc.index = (df_cumsum.index)*100
@@ -395,7 +393,7 @@ def getcum_huff(pivoted, nper,dat='',sta='', dirout=''):
     plt.title(sta)
     plt.legend()
     plt.savefig(dirout+namae.replace('.csv','.png'),dpi=300)
-    plt.show()
+    plt.close()
     return cums
 
 def getdistribusi(cums, nper, dat='',sta='', dirout='', saveas=True):
@@ -436,11 +434,11 @@ def getdistribusi(cums, nper, dat='',sta='', dirout='', saveas=True):
         
         plt.tight_layout()
         plt.savefig(dirout+'VRain_'+dat+'-'+sta+'-mean-duration-'+str(nper)+'-hour.png')
-        plt.show()
-        
+
         canvas_figure = FigureCanvasTkAgg(fig, master=dashboard_frame)
         canvas_figure.draw()
         canvas_figure.get_tk_widget().pack(fill="x", expand=False)
+        plt.close(fig)
     return df_melted
 
 
@@ -518,8 +516,10 @@ def load_demo():
 def process_data(f,par_thresh, input_type, thresh_type, file_id, output_dir, 
                  par_rainmin,durtype): 
     
+    for widget in dashboard_frame.winfo_children(): widget.destroy()
+
     status_label=[i for i in log_frame.winfo_children()]
-    
+
     status_label[0].config(text="Step 1. Reading file: N/A", font=("Arial", 9), fg="red")
     status_label[1].config(text="Step 2. Preprocess data: N/A", font=("Arial", 9), fg="red")
     try: status_label[2].config(text="Step 3. Group rainfall event: N/A", font=("Arial", 9), fg="red")
@@ -614,7 +614,17 @@ def reset():
     for widget in dashboard_frame.winfo_children(): widget.destroy()
     for w in log_frame.winfo_children(): w.destroy()
     init()
-    #status_label5.destroy()
+    _add_dashboard_placeholder()
+    input_dir.set('')
+    output_dir.set('')
+    file_id.set('Station Name')
+    par_thresh.set('50')
+    par_rainmin.set('1')
+    thresh_type.set('1. Absolute value (in mm)')
+    thresh_label.config(text="Accumulated Rainfall (mm):")
+    dur_type.set('Percentage (%)')
+    dur_num.config(state="disabled")
+    status_var.set("Ready  —  Load a file or click Demo to get started.")
 
 def select_output_directory():
     directory = filedialog.askdirectory()
@@ -630,9 +640,16 @@ def save_results():
 def on_combobox_select(event):
     selected_value = dur_type.get()
     if selected_value == "Fixed duration (Hour)":
-        dur_num.config(state="normal")  # Aktifkan Entry
+        dur_num.config(state="normal")
     else:
-        dur_num.config(state="disabled")  # Nonaktifkan Entry
+        dur_num.config(state="disabled")
+
+def on_thresh_type_select(event):
+    sel = thresh_type.get()
+    if sel == "1. Absolute value (in mm)":
+        thresh_label.config(text="Accumulated Rainfall (mm):")
+    else:
+        thresh_label.config(text="Percentile Threshold (0–1):")
 
 # ============================== Dummy input ============================== #
 
@@ -750,7 +767,7 @@ thresh_type = ttk.Combobox(par_frame, values=["1. Absolute value (in mm)",'2. Pe
 thresh_type.set("1. Absolute value (in mm)")
 thresh_type.pack(side='left',padx=5)
 
-thresh_label = tk.Label(par_frame, text="Accumulated Rainfall (mm) \nor Percentile Threshold:",
+thresh_label = tk.Label(par_frame, text="Accumulated Rainfall (mm):",
                         justify="left")
 thresh_label.pack(side="left",padx=5)
 
@@ -797,7 +814,8 @@ thresh_label4.pack(side="left",padx=5, pady=5)
 dur_num = ttk.Combobox(process_frame, values=[1,2,3,4,5,6,7,8,9,10,11,12,24], state="disabled")
 dur_num.pack(side="left",pady=5, padx=5)
 
-dur_type.bind("<<ComboboxSelected>>", on_combobox_select)  # Bind event
+dur_type.bind("<<ComboboxSelected>>", on_combobox_select)
+thresh_type.bind("<<ComboboxSelected>>", on_thresh_type_select)
 
 #Menu View (selipan)
 view_menu = tk.Menu(menu_bar, tearoff=0)
@@ -876,6 +894,13 @@ duration_label.pack(pady=5)
 
 dashboard_frame = tk.LabelFrame(frame, text="Plot Dashboard")
 dashboard_frame.pack(pady=5, fill="y", expand=False)
+
+def _add_dashboard_placeholder():
+    tk.Label(dashboard_frame,
+             text="Rainfall distribution plot will appear here after processing.",
+             fg="gray", font=("Arial", 9)).pack(pady=20)
+
+_add_dashboard_placeholder()
 
 # Status bar
 status_var = tk.StringVar(value="Ready  —  Load a file or click Demo to get started.")

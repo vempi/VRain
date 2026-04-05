@@ -180,7 +180,7 @@ class ThiessenApp:
         # Plot Style Menu
         self.edit_menu = tk.Menu(self.menu_bar, tearoff=0)
         self.edit_menu.add_command(label="Default", command=lambda: self.set_plot_style('classic'))
-        self.edit_menu.add_command(label="Seaborn", command=lambda: self.set_plot_style('seaborn'))
+        self.edit_menu.add_command(label="Seaborn", command=lambda: self.set_plot_style('seaborn-v0_8'))
         self.edit_menu.add_command(label="Grayscale", command=lambda: self.set_plot_style('grayscale'))
         self.edit_menu.add_command(label="Solarize", command=lambda: self.set_plot_style('Solarize_Light2'))
         self.edit_menu.add_command(label="ggplot", command=lambda: self.set_plot_style('ggplot'))
@@ -211,9 +211,22 @@ class ThiessenApp:
                                    relief=tk.SUNKEN, fg="gray", font=("Arial", 8), bd=1)
         self._statusbar.pack(fill=tk.X, side=tk.BOTTOM)
 
-        # Main Container Frame
-        self.main_frame = tk.Frame(root, padx=10, pady=10)
-        self.main_frame.pack(fill=tk.BOTH, expand=True)
+        # Main Container Frame with scrollbar
+        _scroll_container = tk.Frame(root)
+        _scroll_container.pack(fill=tk.BOTH, expand=True)
+        _canvas = tk.Canvas(_scroll_container, highlightthickness=0)
+        _vbar = ttk.Scrollbar(_scroll_container, orient="vertical", command=_canvas.yview)
+        _canvas.configure(yscrollcommand=_vbar.set)
+        _vbar.pack(side=tk.RIGHT, fill=tk.Y)
+        _canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self.main_frame = tk.Frame(_canvas, padx=10, pady=10)
+        _canvas.create_window((0, 0), window=self.main_frame, anchor="nw")
+        self.main_frame.bind(
+            "<Configure>",
+            lambda e: _canvas.configure(scrollregion=_canvas.bbox("all"))
+        )
+        _canvas.bind_all("<MouseWheel>",
+            lambda e: _canvas.yview_scroll(int(-1*(e.delta/120)), "units"))
 
         # Input Frame
         self.input_frame = tk.LabelFrame(self.main_frame, text="Input Files", padx=10, pady=10)
@@ -287,8 +300,10 @@ class ThiessenApp:
 
         self.counties = None
         self.counties_crs = "EPSG:4326"
+        self.counties_original = None
         self.rainfall = None
         self.rainfall_crs = "EPSG:4326"
+        self.rainfall_original = None
         self.tp_polys_clipped = None
         self.plot_style = 'default'
         self.out_dir_var = ''
@@ -298,18 +313,30 @@ class ThiessenApp:
         if file_path:
             self.shapefile_path.set(file_path)
             self.counties = _read_shp(file_path)
-            self.counties_crs = "EPSG:4326"  # default; ideally read from .prj
-            messagebox.showinfo("Sukses", f"Shapefile berhasil dimuat dengan CRS: {self.counties_crs}")
+            self.counties_original = list(self.counties)
+            self.counties_crs = "EPSG:4326"
+
+            # If stations were loaded first, re-transform them to counties CRS
+            if self.rainfall_original is not None:
+                self.rainfall = _to_crs(self.rainfall_original, self.rainfall_crs, self.counties_crs)
 
             plt.style.use(self.plot_style)
             fig, ax = plt.subplots(figsize=(10, 10))
             _plot_records(ax, self.counties, color='none', edgecolor='black', label='Catchment area')
-            ax.set_title("Area Boundary")
-            ax.set_xlabel("X"); ax.set_ylabel('Y')
+            if self.rainfall is not None:
+                _plot_records(ax, self.rainfall, point=True, color='red',
+                              markersize=8, label="Rainfall stations")
+                ax.set_title("Area Boundary & Station Locations")
+                ax.legend()
+            else:
+                ax.set_title("Area Boundary")
+            ax.set_xlabel("Longitude / X"); ax.set_ylabel("Latitude / Y")
             for widget in self.plot_frame.winfo_children(): widget.destroy()
             canvas = FigureCanvasTkAgg(fig, master=self.plot_frame)
             canvas.draw()
             canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+            plt.close(fig)
+            messagebox.showinfo("Sukses", f"Shapefile loaded (CRS: {self.counties_crs})")
 
     def load_csv(self):
         file_path = filedialog.askopenfilename(
@@ -331,6 +358,7 @@ class ThiessenApp:
                                   'geometry': Point(float(row[xcol]), float(row[ycol])),
                                   **{k: row[k] for k in df.columns if k not in [xcol, ycol]}}
                                  for i, row in df.iterrows()]
+                self.rainfall_original = list(self.rainfall)
                 self.rainfall_crs = selected_crs
                 self.status_var.set(
                     f"Station file loaded: {os.path.basename(file_path)}  "
@@ -339,79 +367,111 @@ class ThiessenApp:
                 self.rainfall = _read_shp(file_path)
                 self.rainfall_crs = "EPSG:4326"
 
+            # Transform to counties CRS if boundary is loaded
             if self.counties is not None:
-                self.rainfall = _to_crs(self.rainfall, self.rainfall_crs, self.counties_crs)
-                messagebox.showinfo("Sukses", f"Data berhasil dimuat dan dikonversi ke CRS: {self.counties_crs}")
+                self.rainfall = _to_crs(self.rainfall_original, self.rainfall_crs, self.counties_crs)
 
-                plt.style.use(self.plot_style)
-                fig, ax = plt.subplots(figsize=(10, 10))
+            plt.style.use(self.plot_style)
+            fig, ax = plt.subplots(figsize=(10, 10))
+            if self.counties is not None:
                 _plot_records(ax, self.counties, color='none', edgecolor='black', label='Catchment area')
-                _plot_records(ax, self.rainfall, point=True, color='red', markersize=8, label="Rainfall stations")
-                ax.set_title("Station Locations")
-                ax.set_xlabel("X"); ax.set_ylabel('Y')
-                for widget in self.plot_frame.winfo_children(): widget.destroy()
-                canvas = FigureCanvasTkAgg(fig, master=self.plot_frame)
-                canvas.draw()
-                canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+            _plot_records(ax, self.rainfall, point=True, color='red',
+                          markersize=8, label="Rainfall stations")
+            ax.set_title("Station Locations")
+            ax.set_xlabel("Longitude / X"); ax.set_ylabel("Latitude / Y")
+            ax.legend()
+            for widget in self.plot_frame.winfo_children(): widget.destroy()
+            canvas = FigureCanvasTkAgg(fig, master=self.plot_frame)
+            canvas.draw()
+            canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+            plt.close(fig)
+            if self.counties is not None:
+                messagebox.showinfo("Sukses", f"Data loaded and converted to CRS: {self.counties_crs}")
 
     def set_plot_style(self, style):
+        try:
+            plt.style.use(style)
+        except Exception:
+            style = 'default'
         self.plot_style = style
+        label_map = {
+            'classic': 'Default', 'seaborn-v0_8': 'Seaborn', 'grayscale': 'Grayscale',
+            'Solarize_Light2': 'Solarize', 'ggplot': 'ggplot', 'bmh': 'BMH',
+            'fivethirtyeight': 'Fivethirtyeight', 'tableau-colorblind10': 'Color blind',
+        }
+        self.status_var.set(f"Plot style: {label_map.get(style, style)}")
 
     def generate_polygons(self):
-        if self.counties is None or self.rainfall is None:
-            messagebox.showerror("Error", "Harap muat file shapefile dan CSV terlebih dahulu!")
+        if self.counties_original is None or self.rainfall_original is None:
+            messagebox.showerror("Error", "Please load both shapefile and station file first!")
             return
 
-        x = [r['geometry'].x for r in self.rainfall]
-        y = [r['geometry'].y for r in self.rainfall]
+        selected_out_crs = self.crs_options.get(self.out_crs_var.get(), "EPSG:4326")
+
+        # Always compute from originals so CRS can be changed and re-generated
+        counties_work = list(self.counties_original)  # already in counties_crs (EPSG:4326)
+        rainfall_work = _to_crs(self.rainfall_original, self.rainfall_crs, self.counties_crs)
+
+        x = [r['geometry'].x for r in rainfall_work]
+        y = [r['geometry'].y for r in rainfall_work]
         coords = list(zip(x, y))
-        min_x, min_y, max_x, max_y = _total_bounds(self.counties)
+        min_x, min_y, max_x, max_y = _total_bounds(counties_work)
         buffer = max(max_x - min_x, max_y - min_y)
-        coords_tp = coords + [[min_x - buffer, min_y - buffer], [max_x + buffer, min_y - buffer],
-                              [max_x + buffer, max_y + buffer], [min_x - buffer, max_y + buffer]]
+        coords_tp = coords + [
+            [min_x - buffer, min_y - buffer], [max_x + buffer, min_y - buffer],
+            [max_x + buffer, max_y + buffer], [min_x - buffer, max_y + buffer]
+        ]
 
         tp = Voronoi(coords_tp)
         tp_poly_list = []
-
         for region in tp.regions:
             if -1 in region or len(region) == 0:
                 continue
             poly = Polygon([tp.vertices[i] for i in region])
             tp_poly_list.append({'geometry': poly})
 
-        self.tp_polys_clipped = _clip(tp_poly_list, self.counties)
-        total_county_area = sum(r['geometry'].area for r in self.counties)
-        for r in self.tp_polys_clipped:
+        tp_clipped = _clip(tp_poly_list, counties_work)
+        total_area = sum(r['geometry'].area for r in counties_work)
+        for r in tp_clipped:
             r['Area'] = r['geometry'].area
-            r['Weight'] = r['geometry'].area / total_county_area
+            r['Weight'] = r['geometry'].area / total_area
 
-        self.rainfall = _sjoin_within(self.rainfall, self.tp_polys_clipped)
+        rainfall_joined = _sjoin_within(rainfall_work, tp_clipped)
 
-        # Reproject to output CRS
-        selected_out_crs = self.crs_options.get(self.out_crs_var.get(), "EPSG:4326")
-        self.tp_polys_clipped = _to_crs(self.tp_polys_clipped, self.counties_crs, selected_out_crs)
-        self.rainfall = _to_crs(self.rainfall, self.counties_crs, selected_out_crs)
-        self.counties = _to_crs(self.counties, self.counties_crs, selected_out_crs)
-        self.counties_crs = selected_out_crs
+        # Transform to output CRS for display and saving
+        self.tp_polys_clipped = _to_crs(tp_clipped, self.counties_crs, selected_out_crs)
+        self.rainfall = _to_crs(rainfall_joined, self.counties_crs, selected_out_crs)
+        counties_display = _to_crs(counties_work, self.counties_crs, selected_out_crs)
+
+        # Determine axis labels based on output CRS
+        if selected_out_crs == "EPSG:4326":
+            xlabel, ylabel = "Longitude (°)", "Latitude (°)"
+        elif "3857" in selected_out_crs:
+            xlabel, ylabel = "Easting — Web Mercator (m)", "Northing — Web Mercator (m)"
+        else:
+            xlabel, ylabel = "Easting (m)", "Northing (m)"
 
         plt.style.use(self.plot_style)
         fig, ax = plt.subplots(figsize=(10, 10))
-        _plot_records(ax, self.counties, color='none', edgecolor='black', label='Catchment area')
-        _plot_records(ax, self.tp_polys_clipped, color='white', edgecolor='black', linewidth=0.5, label='Thiessen Polygon')
-        _plot_records(ax, self.rainfall, point=True, color='red', markersize=8, label="Rainfall stations")
-        ax.set_title(f"Station Locations & Thiessen Polygons ({selected_out_crs})")
-        ax.set_xlabel("X")
-        ax.set_ylabel('Y')
+        _plot_records(ax, counties_display, color='none', edgecolor='black', label='Catchment area')
+        _plot_records(ax, self.tp_polys_clipped, color='white', edgecolor='black',
+                      linewidth=0.5, label='Thiessen Polygon')
+        _plot_records(ax, self.rainfall, point=True, color='red',
+                      markersize=8, label="Rainfall stations")
+        ax.set_title(f"Thiessen Polygons  ({selected_out_crs})")
+        ax.set_xlabel(xlabel)
+        ax.set_ylabel(ylabel)
         ax.legend()
 
         for widget in self.plot_frame.winfo_children():
             widget.destroy()
-
         canvas = FigureCanvasTkAgg(fig, master=self.plot_frame)
         canvas.draw()
         canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+        plt.close(fig)
 
-        messagebox.showinfo("Sukses", f"Thiessen polygons generated in CRS: {selected_out_crs}!")
+        messagebox.showinfo("Sukses", f"Thiessen polygons generated ({selected_out_crs}).\n"
+                            "You can change the output CRS and click Generate again.")
 
     def save_outputs(self):
         if self.tp_polys_clipped is None or self.rainfall is None:
@@ -454,7 +514,9 @@ class ThiessenApp:
     def reset_data(self):
         """Reset all loaded data and clear the GUI."""
         self.counties = None
+        self.counties_original = None
         self.rainfall = None
+        self.rainfall_original = None
         self.tp_polys_clipped = None
 
         for widget in self.plot_frame.winfo_children():
